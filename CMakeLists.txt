@@ -24,6 +24,7 @@ add_executable(${PROJECT_NAME}
 	Includes/base64.h
 	Includes/WebIo.h
 	Includes/Printer.h
+	Includes/mini/ini.h
 )
 
 find_package(PkgConfig REQUIRED)
