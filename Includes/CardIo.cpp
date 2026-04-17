@@ -329,12 +329,35 @@ void CardIo::Command_7A_RegisterFont()
 
 void CardIo::Command_7B_PrintImage()
 {
-	if (!HasCard()) {
-		SetPError(P::PRINT_ERR);
-		return;
-	}
-	status.SoftReset();
-	runningCommand = false;
+    if (currentPacket.size() < 8) {
+        SetPError(P::SYSTEM_ERR);
+        return;
+    }
+
+    switch (currentStep) {
+        case 0:
+            {
+                if (!HasCard()) {
+                    SetPError(P::PRINT_ERR);
+                    return;
+                }
+
+                m_printer->QueuePrintImage(currentPacket);
+
+                // FIXME: Should we only move the head when we're actually about to print?
+                MoveCard(R::THERMAL_HEAD);
+            }
+            break;
+        case 1:
+            MoveCard(R::READ_WRITE_HEAD);
+            break;
+        default:
+            break;
+    }
+
+    if (currentStep > 1) {
+        runningCommand = false;
+    }
 }
 
 void CardIo::Command_7C_PrintL()
@@ -372,7 +395,12 @@ void CardIo::Command_7C_PrintL()
 
 void CardIo::Command_7D_Erase()
 {
-	switch (currentStep) {
+    if (currentPacket.size() < 2) {
+        SetPError(P::SYSTEM_ERR);
+        return;
+    }
+
+    switch (currentStep) {
 		case 0:
 			if (!HasCard()) {
 				SetPError(P::PRINT_ERR);
@@ -381,8 +409,8 @@ void CardIo::Command_7D_Erase()
 			MoveCard(R::THERMAL_HEAD);
 			break;
 		case 1:
-			MoveCard(R::READ_WRITE_HEAD);
-			m_printer->Erase();
+            m_printer->Erase(currentPacket[0], currentPacket[1]);
+            MoveCard(R::READ_WRITE_HEAD);
 			break;
 		default:
 			break;
@@ -857,6 +885,12 @@ CardIo::StatusCode CardIo::ReceivePacket(std::vector<uint8_t> &readBuffer)
 
 	// Remove the current command and the masters status bytes, we don't need it
 	currentPacket.erase(currentPacket.begin(), currentPacket.begin() + 4);
+
+    // We need to handle the image print packet here as there will be multiple commands before ENQ.
+    // The last packet will go normally (with 0x30).
+    if (currentCommand == 0x7b && currentPacket[0] == 0x31) {
+        m_printer->QueuePrintImage(currentPacket);
+    }
 
 	// TODO: Do all of this below better...
 	status.SoftReset();

@@ -20,7 +20,49 @@
 */
 
 #include "Printer.h"
+#include <iconv.h>
 
+char* iconv_string(const char* to_charset,
+                   const char* from_charset,
+                   const char* input,
+                   size_t input_len)
+{
+    if (!input || input_len == 0)
+        return nullptr;
+
+    iconv_t cd = iconv_open(to_charset, from_charset);
+    if (cd == (iconv_t)-1)
+        return nullptr;
+
+    // Worst case: UTF‑8 output can be ~4× input size
+    size_t out_len = input_len * 4 + 4;
+    char* out_buf = (char*)malloc(out_len);
+    if (!out_buf) {
+        iconv_close(cd);
+        return nullptr;
+    }
+
+    char* in_ptr = const_cast<char*>(input);
+    size_t in_bytes = input_len;
+
+    char* out_ptr = out_buf;
+    size_t out_bytes = out_len;
+
+    size_t res = iconv(cd, &in_ptr, &in_bytes, &out_ptr, &out_bytes);
+
+    iconv_close(cd);
+
+    if (res == (size_t)-1) {
+        free(out_buf);
+        return nullptr;
+    }
+
+    // Null‑terminate
+    if (out_bytes > 0)
+        *out_ptr = '\0';
+
+    return out_buf;
+}
 bool Printer::RegisterFont(std::vector<uint8_t>& data)
 {
 	// Real data size is 0x48, but the first byte indicates slot position
@@ -75,6 +117,8 @@ bool Printer::QueuePrintLine(std::vector<uint8_t>& data)
 		Append = '1',
 	};
 
+	std::lock_guard<std::mutex> print_lock(m_printLock);
+
 	if (m_cardImage == nullptr)
 		LoadCardImage(m_localName);
 
@@ -82,8 +126,9 @@ bool Printer::QueuePrintLine(std::vector<uint8_t>& data)
 	constexpr uint8_t maxOffset = 0x14;
 	const uint8_t offset = data[2] < maxOffset ? data[2] : maxOffset;
 
-	if (static_cast<BufferControl>(data[1]) == BufferControl::Clear)
+	if (static_cast<BufferControl>(data[1]) == BufferControl::Clear) {
 		m_printQueue.clear();
+	}
 
 	std::vector<uint8_t> temp = {};
 	std::copy(data.begin() + 3, data.end(), std::back_inserter(temp));
@@ -95,8 +140,104 @@ bool Printer::QueuePrintLine(std::vector<uint8_t>& data)
 	return true;
 }
 
+bool Printer::QueuePrintImage(std::vector<uint8_t>& data) {
+	enum Mode {
+		Now = '0',
+		Wait = '1',
+	};
+
+	enum BufferControl {
+		Clear = '0',
+		Append = '1',
+	};
+
+	std::lock_guard<std::mutex> print_lock(m_printLock);
+
+	if (m_cardImage == nullptr)
+		LoadCardImage(m_localName);
+
+    g_logger->debug("Added image packet");
+
+	if (static_cast<BufferControl>(data[1]) == BufferControl::Clear) {
+        g_logger->debug("Clear buffer");
+        // m_imagePrintQueue.clear();
+	}
+
+	// 35pixels for each square
+	// 13 rows
+	std::vector<uint8_t> temp = {};
+    std::copy(data.begin() + 8, data.end(), std::back_inserter(temp));
+    m_imagePrintQueue.push_back({data[2], data[3], data[4], data[5], data[6], data[7], temp});
+
+    if (static_cast<Mode>(data[0]) == Mode::Now) {
+        g_logger->debug("Draw");
+        std::thread(&Printer::PrintImage, this).detach();
+    }
+
+	return true;
+}
+
+void Printer::PrintImage()
+{
+    std::lock_guard<std::mutex> print_lock(m_printLock);
+    if (m_imagePrintQueue.empty()) {
+        return;
+    }
+
+    constexpr uint8_t defaultX = 86; // This is good for *most* cards
+    const uint8_t defaultY = m_isHorizontalCard ? 49 : 84;
+
+    g_logger->debug("Start draw, packet count {0:d}, expected {1:d}", m_imagePrintQueue.size(), m_imagePrintQueue[0].packetCnt);
+    std::sort(m_imagePrintQueue.begin(), m_imagePrintQueue.end(), [](const ImagePrintCommand& a, const ImagePrintCommand& b){
+        return a.packetId < b.packetId;
+    });
+
+    auto width = 24 * (m_imagePrintQueue[0].xEnd - m_imagePrintQueue[0].xBegin + 1);
+    auto height = 24 * (m_imagePrintQueue[0].yEnd - m_imagePrintQueue[0].yBegin + 1);
+    g_logger->debug("Image width: {0:d}, Image height: {1:d}", width, height);
+    auto x = 0;
+    auto y = 0;
+    auto imageSurface = QuickCreateSurface(width, height);
+
+    for (const auto& packet : m_imagePrintQueue) {
+    // g_logger->debug("packet {0:d}", packet.packetId);
+        auto& data = packet.data;
+        for (const auto& pixelData : data) {
+            for (auto i = 7; i >= 0; --i) {
+                if (x >= imageSurface->w || y >= imageSurface->h) {
+                    continue;
+                }
+                auto pixelPtr = reinterpret_cast<uint8_t*>(imageSurface->pixels) + y * imageSurface->pitch + x * imageSurface->format->BytesPerPixel;
+                if (pixelData & (1u << i)) {
+                    *reinterpret_cast<uint32_t*>(pixelPtr) = SDL_MapRGBA(imageSurface->format, 0x64, 0x64, 0x96, 0xff);
+                }
+                else {
+                    *reinterpret_cast<uint32_t*>(pixelPtr) = SDL_MapRGBA(imageSurface->format, 0, 0, 0, 0);
+                }
+                ++x;
+                if (x == width) {
+                    x = 0;
+                    ++y;
+                }
+            }
+        }
+    }
+
+    auto scaledImageSurface = QuickCreateSurface(width * 1.5, height * 1.5);
+    SDL_BlitScaled(imageSurface, NULL, scaledImageSurface, NULL);
+    SDL_Rect pos{defaultX + 36 * (m_imagePrintQueue[0].xBegin - 1), defaultY + 36 * (m_imagePrintQueue[0].yBegin - 1), 0, 0};
+    // SDL_SetSurfaceBlendMode(scaledImageSurface, SDL_BLENDMODE_NONE);
+    SDL_BlitSurface(scaledImageSurface, NULL, m_cardImage, &pos);
+
+    SDL_FreeSurface(imageSurface);
+    SDL_FreeSurface(scaledImageSurface);
+
+    m_imagePrintQueue.clear();
+}
+
 void Printer::PrintLine()
 {
+	std::lock_guard<std::mutex> print_lock(m_printLock);
 	if (m_printQueue.empty())
 		return;
 
@@ -124,7 +265,7 @@ void Printer::PrintLine()
 
 	for (const auto& print : m_printQueue)
 	{
-		auto converted = SDL_iconv_string("UTF-8", "SHIFT-JIS", (const char*)print.data.data(), print.data.size());
+        auto converted = iconv_string("UTF-8", "SHIFT-JIS", (const char*)print.data.data(), print.data.size());
 		if (converted == nullptr) {
 			g_logger->error("Printer::PrintLine: iconv couldn't convert the string while printing!");
 			return;
@@ -139,7 +280,7 @@ void Printer::PrintLine()
 		utf8_int32_t currentChar = '\0';
 
 		// We don't run this for a single line skip as the FontLineSkip isn't the same as our defaultY
-		if (print.offset > 1) {
+        if (print.offset > 1) {
 			yPos += TTF_FontLineSkip(font) * (print.offset);
 			if (!m_isHorizontalCard)
 				yPos += (print.offset) * (verticalCardOffset - 2); // Don't ask
@@ -199,13 +340,15 @@ void Printer::PrintLine()
 							SDL_BlitScaled(m_customGlyphs.at(currentChar), NULL, scaledCustomGlyph, NULL);
 							if (yScale[0] != '1')
 								location.y -= (scaledCustomGlyph->h / std::atoi(yScale.c_str()));
+                            // SDL_SetSurfaceBlendMode(scaledCustomGlyph, SDL_BLENDMODE_NONE);
 							SDL_BlitSurface(scaledCustomGlyph, NULL, m_cardImage, &location);
 							xPos += scaledCustomGlyph->w;
 							SDL_FreeSurface(scaledCustomGlyph);
 							scaledCustomGlyph = nullptr;
 						}
 						else {
-							SDL_BlitSurface(m_customGlyphs.at(currentChar), NULL, m_cardImage, &location);
+                            // SDL_SetSurfaceBlendMode(m_customGlyphs.at(currentChar), SDL_BLENDMODE_NONE);
+                            SDL_BlitSurface(m_customGlyphs.at(currentChar), NULL, m_cardImage, &location);
 							xPos += m_customGlyphs.at(currentChar)->w;
 						}
 					}
@@ -216,16 +359,24 @@ void Printer::PrintLine()
 			SDL_Surface* glyph = TTF_RenderGlyph32_Blended(font, currentChar, color);
 			SDL_Surface* scaledGlyph = QuickCreateSurface(glyph->clip_rect.w * std::atoi(xScale.c_str()), glyph->clip_rect.h * std::atoi(yScale.c_str()));
 			SDL_BlitScaled(glyph, NULL, scaledGlyph, NULL);
-
 			// Final blit
 			SDL_Rect location = { xPos, yPos, 0, 0 };
-			SDL_BlitSurface(scaledGlyph, NULL, m_cardImage, &location);
+
+            int advance = 0;
+            TTF_GlyphMetrics32(font, currentChar, NULL, NULL, NULL, NULL, &advance);
+
+            // if (advance > 0) {
+            //     SDL_SetSurfaceBlendMode(scaledGlyph, SDL_BLENDMODE_NONE);
+            // }
+            // else {
+            //     SDL_SetSurfaceBlendMode(scaledGlyph, SDL_BLENDMODE_BLEND);
+            // }
+
+            SDL_BlitSurface(scaledGlyph, NULL, m_cardImage, &location);
 
 			// Used with yScaleCompensate when we reset scale on the same line
 			maxYSizeForLine = scaledGlyph->h > maxYSizeForLine ? scaledGlyph->h : maxYSizeForLine;
 
-			int advance = 0;
-			TTF_GlyphMetrics32(font, currentChar, NULL, NULL, NULL, NULL, &advance);
 			// TODO: F-Zero AX has odd spacing, if we use the default spacing it's too much, but it works for every other game?
 #if 0
 			if (currentChar == 0x20)
@@ -237,7 +388,7 @@ void Printer::PrintLine()
 			SDL_FreeSurface(glyph);
 			SDL_FreeSurface(scaledGlyph);
 		}
-		SDL_free(converted);
+        free(converted);
 	}
 	m_printQueue.clear();
 	TTF_CloseFont(font);

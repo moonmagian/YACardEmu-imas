@@ -190,6 +190,7 @@ protected:
 	bool runningCommand{false};
 
 	std::vector<uint8_t> currentPacket{};
+
 	std::vector<uint8_t> commandBuffer{0, 0, 0, 0};
 	std::vector<uint8_t> printBuffer{};
 

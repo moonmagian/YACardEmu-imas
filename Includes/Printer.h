@@ -38,7 +38,13 @@
 
 #include "utf8.h"
 
+#include <iconv.h>
+
 extern std::shared_ptr<spdlog::async_logger> g_logger;
+char* iconv_string(const char* to_charset,
+                   const char* from_charset,
+                   const char* input,
+                   size_t input_len);
 
 class Printer
 {
@@ -76,17 +82,25 @@ public:
 		m_localName = "";
 	}
 
-	void Erase()
+    void Erase(uint8_t begin, uint8_t end)
 	{
-		if (m_cardImage != nullptr) {
-			SDL_FreeSurface(m_cardImage);
-			m_cardImage = nullptr;
-		}
-	}
+        std::lock_guard<std::mutex> print_lock(m_printLock);
+        if (m_cardImage == nullptr) {
+            LoadCardImage(m_localName);
+        }
+        const uint8_t defaultY = m_isHorizontalCard ? 49 : 84;
+
+        SDL_Rect cleanRect{0, defaultY + 36 * (begin - 1), m_cardImage->w, 36 * (end - begin + 1)};
+
+        g_logger->debug("Clean line {0:d} - {1:d}, y {2:d} - {3:d}", begin, end, cleanRect.y, cleanRect.y + cleanRect.h);
+
+        SDL_FillRect(m_cardImage, &cleanRect, SDL_MapRGBA(m_cardImage->format, 0, 0, 0, 0));
+    }
 
 	bool RegisterFont(std::vector<uint8_t>& data);
 	bool QueuePrintLine(std::vector<uint8_t>& data);
-	std::string m_localName = {};
+    bool QueuePrintImage(std::vector<uint8_t> &data);
+    std::string m_localName = {};
 
 	// Default state is a vertical card on the mechs
 	bool m_isHorizontalCard = false;
@@ -98,8 +112,19 @@ protected:
 		uint8_t offset = 0;
 		std::vector<uint8_t> data = {};
 	};
+    struct ImagePrintCommand {
+        uint8_t xBegin = 0;
+        uint8_t xEnd = 0;
+        uint8_t yBegin = 0;
+        uint8_t yEnd = 0;
+        uint8_t packetId = 0;
+        uint8_t packetCnt = 0;
+        std::vector<uint8_t> data = {};
+    };
 
 	std::vector<PrintCommand> m_printQueue = {};
+    std::vector<ImagePrintCommand> m_imagePrintQueue = {};
+    std::mutex m_printLock;
 	std::vector<SDL_Surface*> m_customGlyphs = {};
 
 	SDL_Surface* m_cardImage = nullptr;
@@ -180,6 +205,7 @@ protected:
 	{
 		return SDL_CreateRGBSurface(0, x, y, 32, 0x000000ff, 0x0000ff00, 0x00ff0000, 0xff000000);
 	}
+    void PrintImage();
 };
 
 #endif
