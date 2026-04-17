@@ -184,8 +184,8 @@ void Printer::PrintImage()
         return;
     }
 
-    constexpr uint8_t defaultX = 86; // This is good for *most* cards
-    const uint8_t defaultY = m_isHorizontalCard ? 49 : 84;
+    constexpr uint8_t defaultX = 0; // This is good for *most* cards
+    const uint8_t defaultY = 0;
 
     g_logger->debug("Start draw, packet count {0:d}, expected {1:d}", m_imagePrintQueue.size(), m_imagePrintQueue[0].packetCnt);
     std::sort(m_imagePrintQueue.begin(), m_imagePrintQueue.end(), [](const ImagePrintCommand& a, const ImagePrintCommand& b){
@@ -223,9 +223,9 @@ void Printer::PrintImage()
         }
     }
 
-    auto scaledImageSurface = QuickCreateSurface(width * 1.5, height * 1.5);
+    auto scaledImageSurface = QuickCreateSurface(width, height);
     SDL_BlitScaled(imageSurface, NULL, scaledImageSurface, NULL);
-    SDL_Rect pos{defaultX + 36 * (m_imagePrintQueue[0].xBegin - 1), defaultY + 36 * (m_imagePrintQueue[0].yBegin - 1), 0, 0};
+    SDL_Rect pos{defaultX + 24 * (m_imagePrintQueue[0].xBegin - 1), defaultY + 24 * (m_imagePrintQueue[0].yBegin - 1), 0, 0};
     // SDL_SetSurfaceBlendMode(scaledImageSurface, SDL_BLENDMODE_NONE);
     SDL_BlitSurface(scaledImageSurface, NULL, m_cardImage, &pos);
 
@@ -242,15 +242,15 @@ void Printer::PrintLine()
 		return;
 
 	TTF_Init();
-	constexpr uint8_t defaultFontSize = 36;
+    constexpr uint8_t defaultFontSize = 24;
 	TTF_Font* font = TTF_OpenFont("kochi-gothic-subst.ttf", defaultFontSize);
 	if (font == nullptr) {
 		g_logger->warn("Printer::PrintLine: Unable to initialize TTF_Font with \"kochi-gothic-subst.ttf\"");
 		return;
 	}
 
-	constexpr uint8_t defaultX = 95; // This is good for *most* cards
-	const uint8_t defaultY = m_isHorizontalCard ? 85 : 120;
+    constexpr uint8_t defaultX = 0; // This is good for *most* cards
+    const uint8_t defaultY = 0;
 	constexpr SDL_Color color = { 0x64, 0x64, 0x96, 0xFF };
 	constexpr uint8_t verticalCardOffset = 4;
 

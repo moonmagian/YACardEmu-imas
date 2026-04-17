@@ -88,9 +88,9 @@ public:
         if (m_cardImage == nullptr) {
             LoadCardImage(m_localName);
         }
-        const uint8_t defaultY = m_isHorizontalCard ? 49 : 84;
+        const uint8_t defaultY = 0;
 
-        SDL_Rect cleanRect{0, defaultY + 36 * (begin - 1), m_cardImage->w, 36 * (end - begin + 1)};
+        SDL_Rect cleanRect{0, defaultY + 24 * (begin - 1), m_cardImage->w, 24 * (end - begin + 1)};
 
         g_logger->debug("Clean line {0:d} - {1:d}, y {2:d} - {3:d}", begin, end, cleanRect.y, cleanRect.y + cleanRect.h);
 
@@ -106,7 +106,7 @@ public:
 	bool m_isHorizontalCard = false;
 
 protected:
-	static constexpr uint8_t maxCustomGylphDimensions = 30;
+    static constexpr uint8_t maxCustomGylphDimensions = 24;
 
 	struct PrintCommand {
 		uint8_t offset = 0;
@@ -177,7 +177,7 @@ protected:
 		}
 
 		// Everything else failed, we *need* a surface... So let's generate a transparent one
-		m_cardImage = QuickCreateSurface((m_isHorizontalCard ? 1019 : 640), (m_isHorizontalCard ? 640 : 1019));
+        m_cardImage = QuickCreateSurface(336, 576);
 	}
 
 	void SaveCardImage(std::string& cardName)
