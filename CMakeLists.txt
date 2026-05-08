@@ -60,16 +60,28 @@ set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 14)
 
 target_compile_options(${PROJECT_NAME} PRIVATE -march=native -Wall -Wextra -Wpedantic)
 
-target_link_libraries(${PROJECT_NAME}
-	-lws2_32
-	${CMAKE_THREAD_LIBS_INIT}
-	spdlog::spdlog
-	Iconv::Iconv
-	${SERIAL_LIBRARIES}
-	${SDL2_LIBRARIES}
-	${SDL2_IMAGE_LIBRARIES}
-	${SDL2_TTF_LIBRARIES}
-)
+if(WIN32)
+	target_link_libraries(${PROJECT_NAME}
+		-lws2_32
+		${CMAKE_THREAD_LIBS_INIT}
+		spdlog::spdlog
+		Iconv::Iconv
+		${SERIAL_LIBRARIES}
+		${SDL2_LIBRARIES}
+		${SDL2_IMAGE_LIBRARIES}
+		${SDL2_TTF_LIBRARIES}
+	)
+else()
+	target_link_libraries(${PROJECT_NAME}
+		${CMAKE_THREAD_LIBS_INIT}
+		spdlog::spdlog
+		Iconv::Iconv
+		${SERIAL_LIBRARIES}
+		${SDL2_LIBRARIES}
+		${SDL2_IMAGE_LIBRARIES}
+		${SDL2_TTF_LIBRARIES}
+	)
+endif()
 
 add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E copy_directory
