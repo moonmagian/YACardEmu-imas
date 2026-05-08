@@ -29,7 +29,7 @@ add_executable(${PROJECT_NAME}
 
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-find_package(SPDLOG REQUIRED)
+find_package(spdlog REQUIRED)
 find_package(Iconv REQUIRED)
 pkg_check_modules(SERIAL REQUIRED libserialport)
 pkg_check_modules(SDL2 REQUIRED sdl2)

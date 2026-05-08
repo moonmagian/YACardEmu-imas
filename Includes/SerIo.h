@@ -26,7 +26,6 @@
 #include <windows.h>
 #else
 #define SP_PRIV
-#include "libserialport_internal.h"
 #include <fcntl.h>
 #include <unistd.h>
 #endif
